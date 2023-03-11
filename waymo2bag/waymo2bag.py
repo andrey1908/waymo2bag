@@ -96,8 +96,14 @@ class Waymo2Bag(object):
             if frame_name != 'front':
                 continue
 
-            tf_matrix = np.array(camera_calibration.extrinsic.transform).reshape(4, 4)
-            tf_matrix = np.linalg.inv(tf_matrix)
+            vehicle_to_camera = \
+                np.array(camera_calibration.extrinsic.transform).reshape(4, 4)
+            camera_to_image = np.array(
+                [[ 0,  0,  1,  0],
+                 [-1,  0,  0,  0],
+                 [ 0, -1,  0,  0],
+                 [ 0,  0,  0,  1]])
+            tf_matrix = np.matmul(vehicle_to_camera, camera_to_image)
             tf_msg = to_transform(
                 from_frame_id="base_link",
                 to_frame_id=frame_name,
