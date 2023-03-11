@@ -249,7 +249,7 @@ class Waymo2Bag(object):
 
             write_points_to_bag(points, lidar_name)
 
-        write_points_to_bag(np.concatenate(concat_points, axis=0), "concatenated")
+        # write_points_to_bag(np.concatenate(concat_points, axis=0), "concatenated")
 
 
 def to_transform(from_frame_id, to_frame_id, stamp, trans_mat):
