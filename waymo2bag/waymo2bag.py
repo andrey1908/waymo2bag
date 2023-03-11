@@ -8,6 +8,7 @@ from geometry_msgs.msg import TransformStamped
 import numpy as np
 import rospy
 from sensor_msgs.msg import Image, PointField, CameraInfo
+from nav_msgs.msg import Odometry
 import sensor_msgs.point_cloud2 as point_cloud2
 from std_msgs.msg import Header
 import tensorflow
@@ -80,6 +81,7 @@ class Waymo2Bag(object):
 
                 timestamp = rospy.Time.from_sec(frame.timestamp_micros * 1e-6)
                 # self.write_tf(bag, frame, timestamp)
+                self.write_odom(bag, frame, timestamp)
                 self.write_tf_static(bag, frame, timestamp)
                 self.write_point_cloud(bag, frame, timestamp)
                 self.write_image(bag, frame, timestamp)
@@ -87,6 +89,25 @@ class Waymo2Bag(object):
         finally:
             print(bag)
             bag.close()
+
+    def write_odom(self, bag, frame, timestamp):
+        odom_msg = Odometry()
+        odom_msg.header.frame_id = "map"
+        odom_msg.header.stamp = timestamp
+        odom_msg.child_frame_id = "base_link"
+
+        tf_matrix = np.array(frame.pose.transform).reshape(4, 4)
+        tf_msg = to_transform(
+            from_frame_id="",
+            to_frame_id="",
+            stamp=rospy.Time(),
+            trans_mat=tf_matrix)
+        odom_msg.pose.pose.position.x = tf_msg.transform.translation.x
+        odom_msg.pose.pose.position.y = tf_msg.transform.translation.y
+        odom_msg.pose.pose.position.z = tf_msg.transform.translation.z
+        odom_msg.pose.pose.orientation = tf_msg.transform.rotation
+
+        bag.write("/odom", odom_msg, t=timestamp)
 
     def write_tf_static(self, bag, frame, timestamp):
         tf_message = TFMessage()
