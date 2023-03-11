@@ -49,7 +49,7 @@ class Waymo2Bag(object):
 
         self.load_dir = load_dir
         self.save_dir = save_dir
-        self.tfrecord_pathnames = sorted(glob.glob("tfrecord/*.tfrecord"))
+        self.tfrecord_pathnames = sorted(glob.glob(f"{self.load_dir}/*.tfrecord"))
 
         self.static_tf_message = None
 
@@ -70,7 +70,7 @@ class Waymo2Bag(object):
 
         filename = os.path.basename(pathname).split(".")[0]
         bag = rosbag.Bag(
-            "rosbag/" + str(filename) + ".bag", "w", compression=rosbag.Compression.NONE
+            f"{self.save_dir}/" + str(filename) + ".bag", "w", compression=rosbag.Compression.NONE
         )
         print("filename: %s" % str(filename))
 
