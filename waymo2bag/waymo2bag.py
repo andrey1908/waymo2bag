@@ -7,7 +7,7 @@ import cv2
 from geometry_msgs.msg import TransformStamped
 import numpy as np
 import rospy
-from sensor_msgs.msg import Image, PointField
+from sensor_msgs.msg import Image, PointField, CameraInfo
 import sensor_msgs.point_cloud2 as point_cloud2
 from std_msgs.msg import Header
 import tensorflow
@@ -26,11 +26,11 @@ FILTER_NO_LABEL_ZONE_POINTS = False
 # The dataset contains data from five lidars
 # one mid-range lidar (top) and four short-range lidars (front, side left, side right, and rear)
 SELECTED_LIDAR_SENSOR = {
-    dataset_pb2.LaserName.TOP: "top",
-    dataset_pb2.LaserName.FRONT: "front",
-    dataset_pb2.LaserName.SIDE_LEFT: "side_left",
-    dataset_pb2.LaserName.SIDE_RIGHT: "side_right",
-    dataset_pb2.LaserName.REAR: "rear",
+    dataset_pb2.LaserName.TOP: "top"
+    # dataset_pb2.LaserName.FRONT: "front",
+    # dataset_pb2.LaserName.SIDE_LEFT: "side_left",
+    # dataset_pb2.LaserName.SIDE_RIGHT: "side_right",
+    # dataset_pb2.LaserName.REAR: "rear",
 }
 
 # The value in the waymo open dataset is the raw intensity
@@ -50,6 +50,8 @@ class Waymo2Bag(object):
         self.save_dir = save_dir
         self.tfrecord_pathnames = sorted(glob.glob("tfrecord/*.tfrecord"))
 
+        self.static_tf_message = None
+
     def __len__(self):
         return len(self.tfrecord_pathnames)
 
@@ -57,6 +59,7 @@ class Waymo2Bag(object):
         print("start converting ...")
         for i in range(len(self)):
             self.convert_tfrecord2bag(i)
+            self.static_tf_message = None
         print("finished ...")
 
     def convert_tfrecord2bag(self, file_idx):
@@ -76,12 +79,37 @@ class Waymo2Bag(object):
                 frame.ParseFromString(bytearray(data.numpy()))
 
                 timestamp = rospy.Time.from_sec(frame.timestamp_micros * 1e-6)
-                self.write_tf(bag, frame, timestamp)
+                # self.write_tf(bag, frame, timestamp)
+                self.write_tf_static(bag, frame, timestamp)
                 self.write_point_cloud(bag, frame, timestamp)
                 self.write_image(bag, frame, timestamp)
+                self.write_camera_info(bag, frame, timestamp)
         finally:
             print(bag)
             bag.close()
+
+    def write_tf_static(self, bag, frame, timestamp):
+        tf_message = TFMessage()
+        for camera_calibration in frame.context.camera_calibrations:
+            frame_name = \
+                dataset_pb2.CameraName.Name.Name(camera_calibration.name).lower()
+            if frame_name != 'front':
+                continue
+
+            tf_matrix = np.array(camera_calibration.extrinsic.transform).reshape(4, 4)
+            tf_matrix = np.linalg.inv(tf_matrix)
+            tf_msg = to_transform(
+                from_frame_id="base_link",
+                to_frame_id=frame_name,
+                stamp=rospy.Time(),
+                trans_mat=tf_matrix)
+            tf_message.transforms.append(tf_msg)
+        
+        if self.static_tf_message is None:
+            bag.write("/tf_static", tf_message, t=timestamp)
+            self.static_tf_message = tf_message
+        else:
+            assert self.static_tf_message == tf_message
 
     def write_tf(self, bag, frame, timestamp):
         """
@@ -96,22 +124,6 @@ class Waymo2Bag(object):
         transforms = [
             ("map", "base_link", Tr_vehicle2world),
         ]
-
-        def to_transform(from_frame_id, to_frame_id, stamp, trans_mat):
-            t = tf.transformations.translation_from_matrix(trans_mat)
-            q = tf.transformations.quaternion_from_matrix(trans_mat)
-            tf_msg = TransformStamped()
-            tf_msg.header.stamp = stamp
-            tf_msg.header.frame_id = from_frame_id
-            tf_msg.child_frame_id = to_frame_id
-            tf_msg.transform.translation.x = t[0]
-            tf_msg.transform.translation.y = t[1]
-            tf_msg.transform.translation.z = t[2]
-            tf_msg.transform.rotation.x = q[0]
-            tf_msg.transform.rotation.y = q[1]
-            tf_msg.transform.rotation.z = q[2]
-            tf_msg.transform.rotation.w = q[3]
-            return tf_msg
 
         tf_message = TFMessage()
         for transform in transforms:
@@ -134,6 +146,8 @@ class Waymo2Bag(object):
         """
         for image in frame.images:
             frame_name = dataset_pb2.CameraName.Name.Name(image.name).lower()
+            if frame_name != 'front':
+                continue
 
             img_bgr = cv2.imdecode(np.frombuffer(image.image, np.uint8), cv2.IMREAD_COLOR)
             img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
@@ -152,6 +166,34 @@ class Waymo2Bag(object):
 
             bag.write("/camera/{}/image".format(frame_name), image_msg, t=timestamp)
 
+    def write_camera_info(self, bag, frame, timestamp):
+        for camera_calibration in frame.context.camera_calibrations:
+            frame_name = \
+                dataset_pb2.CameraName.Name.Name(camera_calibration.name).lower()
+            if frame_name != 'front':
+                continue
+
+            cam_info = CameraInfo()
+            cam_info.header.frame_id = frame_name
+            cam_info.header.stamp = timestamp
+            cam_info.width = camera_calibration.width
+            cam_info.height = camera_calibration.height
+            cam_info.distortion_model = "plumb_bob"
+            cam_info.D.extend(camera_calibration.intrinsic[4:])
+            K = np.eye(3)
+            K[0][0] = camera_calibration.intrinsic[0]
+            K[1][1] = camera_calibration.intrinsic[1]
+            K[0][2] = camera_calibration.intrinsic[2]
+            K[1][2] = camera_calibration.intrinsic[3]
+            cam_info.K = K.ravel().tolist()
+            R = np.eye(3)
+            cam_info.R = R.ravel().tolist()
+            P = np.zeros((3, 4))
+            P[0:3, 0:3] = K
+            cam_info.P = P.ravel().tolist()
+
+            bag.write("/camera/{}/camera_info".format(frame_name), cam_info, t=timestamp)
+
     def write_point_cloud(self, bag, frame, timestamp):
         """parse and save the lidar data in psd format
         Args:
@@ -163,6 +205,7 @@ class Waymo2Bag(object):
         (
             range_images,
             camera_projections,
+            _,
             range_image_top_pose,
         ) = frame_utils.parse_range_image_and_camera_projection(frame)
         ret_dict = convert_range_image_to_point_cloud(
@@ -207,6 +250,23 @@ class Waymo2Bag(object):
             write_points_to_bag(points, lidar_name)
 
         write_points_to_bag(np.concatenate(concat_points, axis=0), "concatenated")
+
+
+def to_transform(from_frame_id, to_frame_id, stamp, trans_mat):
+    t = tf.transformations.translation_from_matrix(trans_mat)
+    q = tf.transformations.quaternion_from_matrix(trans_mat)
+    tf_msg = TransformStamped()
+    tf_msg.header.stamp = stamp
+    tf_msg.header.frame_id = from_frame_id
+    tf_msg.child_frame_id = to_frame_id
+    tf_msg.transform.translation.x = t[0]
+    tf_msg.transform.translation.y = t[1]
+    tf_msg.transform.translation.z = t[2]
+    tf_msg.transform.rotation.x = q[0]
+    tf_msg.transform.rotation.y = q[1]
+    tf_msg.transform.rotation.z = q[2]
+    tf_msg.transform.rotation.w = q[3]
+    return tf_msg
 
 
 def convert_range_image_to_point_cloud(
@@ -318,3 +378,7 @@ def waymo2bag():
 
     converter = Waymo2Bag(args.load_dir, args.save_dir)
     converter.convert()
+
+
+if __name__ == '__main__':
+    waymo2bag()
