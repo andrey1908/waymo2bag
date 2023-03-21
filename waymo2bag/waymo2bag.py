@@ -15,7 +15,9 @@ import tensorflow
 import tf
 from tf2_msgs.msg import TFMessage
 import tqdm
+from transforms3d.axangles import axangle2mat
 from waymo_open_dataset import dataset_pb2
+from waymo_open_dataset import label_pb2
 from waymo_open_dataset.utils import frame_utils, range_image_utils, transform_utils
 
 import rosbag
@@ -72,6 +74,8 @@ class Waymo2Bag(object):
         bag = rosbag.Bag(
             f"{self.save_dir}/" + str(filename) + ".bag", "w", compression=rosbag.Compression.NONE
         )
+        tracking_gt = list()
+        object_ids = dict()
         print("filename: %s" % str(filename))
 
         try:
@@ -86,9 +90,52 @@ class Waymo2Bag(object):
                 self.write_point_cloud(bag, frame, timestamp)
                 self.write_image(bag, frame, timestamp)
                 self.write_camera_info(bag, frame, timestamp)
+                self.write_tracking_gt(tracking_gt, frame, frame_idx, object_ids)
         finally:
             print(bag)
             bag.close()
+            with open(f"{self.save_dir}/" + str(filename) + ".txt", 'w') as f:
+                f.writelines(tracking_gt)
+
+    def write_tracking_gt(self, tracking_gt, frame, frame_idx, object_ids):
+        vehicle_pose = np.array(frame.pose.transform).reshape(4, 4)
+        for label in frame.laser_labels:
+            if label.type not in \
+                    (label_pb2.Label.TYPE_VEHICLE,
+                     label_pb2.Label.TYPE_PEDESTRIAN,
+                     label_pb2.Label.TYPE_CYCLIST):
+                continue
+            points = \
+                np.mgrid[-1:1:2j, -1:1:2j, -1:1:2j, 1:1:1j].reshape(4, 8, 1).swapaxes(0, 1)
+            # points.shape = (8, 4, 1)
+
+            box = label.box
+            points *= \
+                np.array([box.length / 2, box.width / 2, box.height / 2, 1]).reshape(4, 1)
+
+            box_pose = np.eye(4)
+            box_pose[0:3, 0:3] = axangle2mat([0., 0., 1.], box.heading)
+            box_pose[0:3, 3] = np.array([box.center_x, box.center_y, box.center_z])
+
+            points = np.matmul(vehicle_pose, np.matmul(box_pose, points))
+            # points.shape = (8, 4, 1)
+
+            points = points.reshape(2, 2, 2, 4)
+            points = points.mean(axis=2)
+            points = points.reshape(4, 4)[:, 0:2]
+            # points.shape = (4, 2)
+
+            lt = points.min(axis=0)
+            rb = points.max(axis=0)
+            wh = rb - lt
+            if label.id in object_ids:
+                obj_id = object_ids[label.id]
+            else:
+                obj_id = len(object_ids)
+                object_ids[label.id] = obj_id
+            tracking_gt.append(
+                f"{frame_idx + 1}, {obj_id + 1}, {lt[0]+0.1}, {lt[1]+0.1}, {wh[0]}, {wh[1]}, "
+                f"1, -1, -1, -1\n")
 
     def write_odom(self, bag, frame, timestamp):
         odom_msg = Odometry()
