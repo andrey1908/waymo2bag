@@ -100,10 +100,10 @@ class Waymo2Bag(object):
     def write_tracking_gt(self, tracking_gt, frame, frame_idx, object_ids):
         vehicle_pose = np.array(frame.pose.transform).reshape(4, 4)
         for label in frame.laser_labels:
-            if label.type not in \
-                    (label_pb2.Label.TYPE_VEHICLE,
-                     label_pb2.Label.TYPE_PEDESTRIAN,
-                     label_pb2.Label.TYPE_CYCLIST):
+            if label.type not in (
+                    label_pb2.Label.TYPE_VEHICLE,
+                    label_pb2.Label.TYPE_PEDESTRIAN,
+                    label_pb2.Label.TYPE_CYCLIST):
                 continue
             points = \
                 np.mgrid[-1:1:2j, -1:1:2j, -1:1:2j, 1:1:1j].reshape(4, 8, 1).swapaxes(0, 1)
