@@ -1,3 +1,10 @@
+Usage:
+```
+python waymo2bag/waymo2bag.py --load_dir tfrecord/ --save_dir rosbag/
+```
+
+___
+
 # waymo2bag
 
 Convert [Waymo Open Dataset](https://waymo.com/open/) dataset to ROS bag file the easy way!
