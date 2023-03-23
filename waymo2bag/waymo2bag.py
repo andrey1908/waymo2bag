@@ -45,14 +45,14 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 class Waymo2Bag(object):
     def __init__(self, load_dir, save_dir,
-            tracking_gt_max_distance=-1):
+            tracking_max_distance=-1):
         # turn on eager execution for older tensorflow versions
         if int(tensorflow.__version__.split(".")[0]) < 2:
             tensorflow.enable_eager_execution()
 
         self.load_dir = load_dir
         self.save_dir = save_dir
-        self.tracking_gt_max_distance = tracking_gt_max_distance
+        self.tracking_max_distance = tracking_max_distance
         self.tfrecord_pathnames = sorted(glob.glob(f"{self.load_dir}/*.tfrecord"))
 
         self.static_tf_message = None
@@ -76,7 +76,7 @@ class Waymo2Bag(object):
         bag = rosbag.Bag(
             f"{self.save_dir}/" + str(filename) + ".bag", "w", compression=rosbag.Compression.NONE
         )
-        tracking_gt = list()
+        tracking = list()
         object_ids = dict()
         print("filename: %s" % str(filename))
 
@@ -92,14 +92,14 @@ class Waymo2Bag(object):
                 self.write_point_cloud(bag, frame, timestamp)
                 self.write_image(bag, frame, timestamp)
                 self.write_camera_info(bag, frame, timestamp)
-                self.write_tracking_gt(tracking_gt, frame, frame_idx, object_ids)
+                self.write_tracking(tracking, frame, frame_idx, object_ids)
         finally:
             print(bag)
             bag.close()
             with open(f"{self.save_dir}/" + str(filename) + ".txt", 'w') as f:
-                f.writelines(tracking_gt)
+                f.writelines(tracking)
 
-    def write_tracking_gt(self, tracking_gt, frame, frame_idx, object_ids):
+    def write_tracking(self, tracking, frame, frame_idx, object_ids):
         vehicle_pose = np.array(frame.pose.transform).reshape(4, 4)
         for label in frame.laser_labels:
             if label.type not in (
@@ -110,8 +110,8 @@ class Waymo2Bag(object):
 
             box = label.box
             dist = np.linalg.norm(np.array([box.center_x, box.center_y, box.center_z]))
-            if self.tracking_gt_max_distance > 0 and \
-                    dist > self.tracking_gt_max_distance:
+            if self.tracking_max_distance > 0 and \
+                    dist > self.tracking_max_distance:
                 continue
 
             points = \
@@ -141,7 +141,7 @@ class Waymo2Bag(object):
             else:
                 obj_id = len(object_ids)
                 object_ids[label.id] = obj_id
-            tracking_gt.append(
+            tracking.append(
                 f"{frame_idx + 1}, {obj_id + 1}, {lt[0]+0.1}, {lt[1]+0.1}, {wh[0]}, {wh[1]}, "
                 f"1, -1, -1, -1\n")
 
@@ -457,14 +457,14 @@ def waymo2bag():
         help="directory to save converted rosbag1 data",
     )
     parser.add_argument(
-        "--tracking_gt_max_distance",
+        "--tracking_max_distance",
         type=float,
         default=-1
     )
     args = parser.parse_args()
 
     converter = Waymo2Bag(args.load_dir, args.save_dir,
-        tracking_gt_max_distance=args.tracking_gt_max_distance)
+        tracking_max_distance=args.tracking_max_distance)
     converter.convert()
 
 
