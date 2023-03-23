@@ -44,13 +44,15 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 
 class Waymo2Bag(object):
-    def __init__(self, load_dir, save_dir):
+    def __init__(self, load_dir, save_dir,
+            tracking_gt_max_distance=-1):
         # turn on eager execution for older tensorflow versions
         if int(tensorflow.__version__.split(".")[0]) < 2:
             tensorflow.enable_eager_execution()
 
         self.load_dir = load_dir
         self.save_dir = save_dir
+        self.tracking_gt_max_distance = tracking_gt_max_distance
         self.tfrecord_pathnames = sorted(glob.glob(f"{self.load_dir}/*.tfrecord"))
 
         self.static_tf_message = None
@@ -105,11 +107,17 @@ class Waymo2Bag(object):
                     label_pb2.Label.TYPE_PEDESTRIAN,
                     label_pb2.Label.TYPE_CYCLIST):
                 continue
+
+            box = label.box
+            dist = np.linalg.norm(np.array([box.center_x, box.center_y, box.center_z]))
+            if self.tracking_gt_max_distance > 0 and \
+                    dist > self.tracking_gt_max_distance:
+                continue
+
             points = \
                 np.mgrid[-1:1:2j, -1:1:2j, -1:1:2j, 1:1:1j].reshape(4, 8, 1).swapaxes(0, 1)
             # points.shape = (8, 4, 1)
 
-            box = label.box
             points *= \
                 np.array([box.length / 2, box.width / 2, box.height / 2, 1]).reshape(4, 1)
 
@@ -448,9 +456,15 @@ def waymo2bag():
         default="/data/rosbag",
         help="directory to save converted rosbag1 data",
     )
+    parser.add_argument(
+        "--tracking_gt_max_distance",
+        type=float,
+        default=-1
+    )
     args = parser.parse_args()
 
-    converter = Waymo2Bag(args.load_dir, args.save_dir)
+    converter = Waymo2Bag(args.load_dir, args.save_dir,
+        tracking_gt_max_distance=args.tracking_gt_max_distance)
     converter.convert()
 
 
